@@ -45,6 +45,9 @@ class Card:
         else:
             return 1
 
+    def cardIndex(self):
+        return self.suit_index*13+self.value-2
+
     @classmethod
     def getCard(cls, suit, value):
         suitDict = {0:"S", 1:"C", 2:"H", 3:"D"}

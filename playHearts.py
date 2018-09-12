@@ -5,6 +5,7 @@ from websocket import create_connection
 import json
 import logging
 import sys
+import time
 from lowPlayBot import LowPlayBot
 from searchPlayBot import SearchPlayBot
 
@@ -22,7 +23,8 @@ class Log(object):
         if self.is_debug:
             print msg
     def save_logs(self,msg):
-        self.logger.info(msg)
+        if self.is_debug:
+            self.logger.info(msg)
 
 IS_DEBUG=False
 system_log=Log(IS_DEBUG)
@@ -123,30 +125,13 @@ class PokerSocket(object):
             self.takeAction(event_name, data)
 
     def doListen(self):
-        try:
-            self.ws = create_connection(self.connect_url)
-            self.ws.send(json.dumps({
-                "eventName": "join",
-                "data": {
-                    "playerNumber": self.player_number,
-                    "playerName": self.player_name,
-                    "token": self.token
-                }
-            }))
-            while 1:
-                result = self.ws.recv()
-                msg = json.loads(result)
-                event_name = msg["eventName"]
-                data = msg["data"]
-                system_log.show_message(event_name)
-                system_log.save_logs(event_name)
-                system_log.show_message(data)
-                system_log.save_logs(data)
-                self.takeAction(event_name, data)
-        except Exception, e:
-            system_log.show_message(e.message)
-            print e.message
-            self.doListen()
+        while True:
+            try:
+                self.doWork()
+            except Exception, e:
+                system_log.show_message(e.message)
+                print e.message
+                time.sleep(1)
 
 def main():
     argv_count=len(sys.argv)
@@ -162,7 +147,7 @@ def main():
         connect_url="ws://localhost:8080/"
     botPlayer=SearchPlayBot(player_name, system_log)
     myPokerSocket=PokerSocket(player_name,player_number,token,connect_url,botPlayer)
-    myPokerSocket.doWork()
+    myPokerSocket.doListen()
 
 if __name__ == "__main__":
     main()

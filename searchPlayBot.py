@@ -1,3 +1,4 @@
+#coding=UTF-8
 
 import random
 
@@ -53,30 +54,36 @@ class SearchPlayBot(HeartsBot):
             card = Card(card_str)
             self.my_hand_cards.append(card)
         pass_cards=[]
-        count=0
-        for i in range(len(self.my_hand_cards)):
-            card=self.my_hand_cards[len(self.my_hand_cards) - (i + 1)]
-            if card==Card("QS"):
-                pass_cards.append(card)
-                count+=1
-            elif card==Card("TC"):
-                pass_cards.append(card)
-                count += 1
-        for i in range(len(self.my_hand_cards)):
-            card = self.my_hand_cards[len(self.my_hand_cards) - (i + 1)]
-            if card.suit_index==2:
-                pass_cards.append(card)
-                count += 1
-                if count ==3:
+
+        big = 0
+        small = 0
+        for c in self.my_hand_cards:
+            if c.value > 8:
+                big += 1
+            else:
+                small += 1
+
+        if small < big:
+            for i in xrange(13):
+                v = i+2
+                for c in self.my_hand_cards:
+                    if v == c.value:
+                        pass_cards.append(c)
+                        if len(pass_cards) >= 3:
+                            break
+                if len(pass_cards) >= 3:
                     break
-        if count <3:
-            for i in range(len(self.my_hand_cards)):
-                card = self.my_hand_cards[len(self.my_hand_cards) - (i + 1)]
-                if card not in self.game_score_cards:
-                    pass_cards.append(card)
-                    count += 1
-                    if count ==3:
-                        break
+        else:
+            for i in xrange(13):
+                v = 14-i
+                for c in self.my_hand_cards:
+                    if v == c.value:
+                        pass_cards.append(c)
+                        if len(pass_cards) >= 3:
+                            break
+                if len(pass_cards) >= 3:
+                    break
+
         return_values=[]
         for card in pass_cards:
             return_values.append(card.toString())
@@ -137,6 +144,8 @@ class SearchPlayBot(HeartsBot):
 
         self.candidateCount = len(cadidate)
         self.selfScore = -data['self']['dealScore']
+
+        self.speculateCards(data)
 
         card_index = self.pickCard(cadidate, previousCards, self.shootMoonStatus(players))
 
@@ -256,6 +265,32 @@ class SearchPlayBot(HeartsBot):
             self.system_log.show_message(message)
             self.system_log.save_logs(message)
 
+    def speculateCards(self, data):
+        cardsOfPlayer = [[] for i in xrange(5)]
+        for s in xrange(4):
+            for v in xrange(13):
+                if HAS_OUT != self.allCards[s][v]:
+                    cardsOfPlayer[self.allCards[s][v]].append(Card.getCard(s, v + 2))
+
+        countOfPlayer = [[] for i in xrange(5)]
+        players = data['players']
+        for p in players:
+            countOfPlayer[self.playerIndex[p['playerName']]] = p['cardsCount']
+
+        for i in xrange(3):
+            pn = i+2
+            for c in cardsOfPlayer[UNKNOWN_OWNER]:
+                if pn in self.emptyColor and c.suit_index in self.emptyColor[pn]:
+                    continue
+                cardsOfPlayer[pn].append(c)
+
+        for i in xrange(3):
+            pn = i+2
+            if countOfPlayer[pn] >= len(cardsOfPlayer[pn]):
+                for c in cardsOfPlayer[pn]:
+                    self.allCards[c.suit_index][c.value-2] = pn
+
+
     def pick_history(self,data,is_timeout,pick_his):
         for key in pick_his.keys():
             message = "Player name:{}, Pick card:{}, Is timeout:{}".format(key,pick_his.get(key),is_timeout)
@@ -265,11 +300,16 @@ class SearchPlayBot(HeartsBot):
     def shootMoonStatus(self, players):
         selfScore = 0
         otherScore = 0
+        maxScoreCount = 0
         for p in players:
             sc = p['scoreCards']
             if len(sc) > 0:
                 if 1 == len(sc) and 'TC' == sc[0]:
                     continue
+
+                if len(sc) > maxScoreCount:
+                    maxScoreCount = len(sc)
+
                 if p['playerName'] == self.player_name:
                     selfScore += 1
                 else:
@@ -279,15 +319,61 @@ class SearchPlayBot(HeartsBot):
         elif selfScore+otherScore >= 2: # heart broken
             return 1
         elif otherScore > 0:
-            return 2   # someone can shoot moon
+            if maxScoreCount > 6:
+                return 2   # someone can shoot moon
+            else:
+                return 4
         else:
             return 3   # I can shoot moon
 
-    def canShootMoon(self):
-        return False
+    def canShootMoon(self, shootStatus):
+        if 2 == shootStatus or 4 == shootStatus or 1 == shootStatus:
+            return False
+
+        myPn = self.playerIndex[self.player_name]
+        pig = Card("QS")
+        topCard = 0
+        heartTop = 0
+        spadeTop = 0
+        hasPig = False
+        for c in self.my_hand_cards:
+            total, low, high = self.getCardPosition(c)
+            if 0 == high:
+                topCard += 1
+            if c.suit_index == pig.suit_index:
+                if c == pig:
+                    hasPig = True
+                if c.value > 12:
+                    spadeTop += 1
+            if 2 == c.suit_index and 0 == high:
+                heartTop += 1
+
+        if 1.0*topCard/len(self.my_hand_cards) > 0.69:
+            return True
+
+        heartTotal = 0
+        for c in self.allCards[2]:
+            if HAS_OUT != c:
+                heartTotal += 1
+
+        if HAS_OUT == self.allCards[0][12]:
+            hasPig = True
+
+        pigOK = False
+        if hasPig or spadeTop > 0:
+            pigOK = True
+
+        heartOK = False
+        if 0 == heartTotal or 1.0*heartTop/heartTotal >= 0.25:
+            heartOK = True
+
+        if pigOK and heartOK:
+            return True
+        else:
+            return False
 
     def pickCard(self, candidate, previous, shootStatus):
-        shoot = self.canShootMoon()
+        shoot = self.canShootMoon(shootStatus)
 
         if 0 == shootStatus or 3 == shootStatus:
             if shoot:
@@ -298,8 +384,12 @@ class SearchPlayBot(HeartsBot):
             return self.pickCardEvadeScore(candidate, previous)
         elif 2 == shootStatus:
             return self.pickCardBlockShootMoon(candidate, previous)
+        elif 4 == shootStatus:
+            return self.pickCardEvadeScore(candidate, previous)
 
     def pickCardEvadeScore(self, candidate, previous):
+        print('pickCardEvadeScore')
+
         resIdx = 0
         gotOdds, averageScore = self.getOdds(previous+[candidate[0]], False)
 
@@ -313,26 +403,35 @@ class SearchPlayBot(HeartsBot):
             msg = "Expected score of :{} is {}".format(candidate[idx], average)
             self.system_log.save_logs(msg)
 
-            if average < averageScore or (average == averageScore and candidate[idx].value > candidate[resIdx].value):
+            if average < averageScore or \
+              (average == averageScore and candidate[idx].score() > candidate[resIdx].score()) or \
+              (average == averageScore and candidate[idx].score() == candidate[resIdx].score() and candidate[idx].value > candidate[resIdx].value):
                 resIdx = idx
                 averageScore = average
 
         return resIdx
 
     def pickCardBlockShootMoon(self, candidate, previous):
+        print('pickCardBlockShootMoon')
+
         resIdx = 0
-        gotOdds, scoreOdds = self.getOdds(previous + [candidate[0]], True)
+        gotOdds, averageScore = self.getOdds(previous + [candidate[0]], True)
 
         for i in xrange(len(candidate) - 1):
             idx = i + 1
-            o1, o2 = self.getOdds(previous + [candidate[idx]], True)
-            if o2 > scoreOdds or (o2 == scoreOdds and candidate[idx].value < candidate[resIdx].value):
+            o1, average = self.getOdds(previous + [candidate[idx]], True)
+            if average > averageScore or \
+              (average == averageScore and candidate[idx].score() < candidate[resIdx].score()) or \
+              (average == averageScore and candidate[idx].score() == candidate[resIdx].score() and candidate[idx].value < candidate[resIdx].value):
                 resIdx = idx
-                scoreOdds = o2
+                averageScore = average
+
         return resIdx
 
     def pickCardShootMoon(self, candidate, previous):
-        pass
+        print('pickCardShootMoon')
+
+        self.pickCardBlockShootMoon(candidate, previous)
 
     def getCardPosition(self, card):
         total = 0
@@ -356,13 +455,26 @@ class SearchPlayBot(HeartsBot):
                 if HAS_OUT != allCards[s][v]:
                     cardsOfPlayer[allCards[s][v]].append(Card.getCard(s, v+2))
         random.shuffle(cardsOfPlayer[UNKNOWN_OWNER])
+
         targetLen = len(cardsOfPlayer[1])
-        baseIdx = 0
+
         for i in xrange(vPlayerCount):
-            l = len(cardsOfPlayer[i+2])
-            if l < targetLen:
-                cardsOfPlayer[i + 2] += cardsOfPlayer[UNKNOWN_OWNER][baseIdx:baseIdx+(targetLen-l)]
-                baseIdx += (targetLen-l)
+            pn = i + 2
+            l = len(cardsOfPlayer[pn])
+            tmp = []
+            baseIdx = 0
+            while l < targetLen and baseIdx < len(cardsOfPlayer[UNKNOWN_OWNER]):
+                if pn not in self.emptyColor or cardsOfPlayer[UNKNOWN_OWNER][baseIdx].suit_index not in self.emptyColor[pn]:
+                    l += 1
+                    tmp.append(cardsOfPlayer[UNKNOWN_OWNER][baseIdx])
+                    cardsOfPlayer[UNKNOWN_OWNER].remove(cardsOfPlayer[UNKNOWN_OWNER][baseIdx])
+                else:
+                    baseIdx += 1
+
+            cardsOfPlayer[pn] += tmp
+
+            if 0 == len(cardsOfPlayer[pn]):
+                cardsOfPlayer[pn] = cardsOfPlayer[UNKNOWN_OWNER]
 
         return cardsOfPlayer
 
@@ -375,6 +487,11 @@ class SearchPlayBot(HeartsBot):
                     candidates.append(c)
             if 0 == len(candidates):
                 candidates = vCards[i+2]
+
+            if 0 == len(candidates):
+                print vCards
+                print self.allCards
+                print self.emptyColor
 
             cc = candidates[0]
             for c in candidates:
@@ -391,9 +508,8 @@ class SearchPlayBot(HeartsBot):
             res.append(cc)
         return res
 
-
     def simulateByMC(self, previousCards, needScore):
-        times = 4000/self.candidateCount
+        times = 3000/self.candidateCount
         prevLen = len(previousCards)
         vPlayerCount = 4 - prevLen
         winScore = 0
@@ -409,7 +525,7 @@ class SearchPlayBot(HeartsBot):
     def whoGotCards(self, cards):
         maxIdx = 0
         for i in xrange(len(cards)):
-            if cards[i].suit_index == cards[0].suit_index and cards[i].value > cards[0].value:
+            if cards[i].suit_index == cards[maxIdx].suit_index and cards[i].value > cards[maxIdx].value:
                 maxIdx = i
         return maxIdx
 
